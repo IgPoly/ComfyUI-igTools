@@ -29,11 +29,11 @@ class IGT_SimpleTilesCalc:
         min_tiles = 10000  # Initialize with infinity
         max_tile_length = math.floor((tile_resolution_px / 640) / 64) * 64
 
-        # Итерация для нахождения лучших размеров плиток
-        for tile_w in range(640, max_tile_length, 64):  # Ширина плитки в диапазоне от 640 до 1536
-            for tile_h in range(640, max_tile_length, 64):  # Высота плитки в диапазоне от 640 до 1536
-                if tile_w * tile_h <= tile_resolution_px:  # Проверка условия разрешения
-                    # Подсчет необходимого количества плиток
+        # 
+        for tile_w in range(640, max_tile_length, 64):  # 
+            for tile_h in range(640, max_tile_length, 64):  # 
+                if tile_w * tile_h <= tile_resolution_px:  # 
+                    # 
                     if (image_width / tile_w) > 1:
                         num_tiles_w = math.ceil(image_width / (tile_w - min_overlap))
                     else:
@@ -43,7 +43,7 @@ class IGT_SimpleTilesCalc:
                     else:
                         num_tiles_h = 1;
                     total_tiles = num_tiles_w * num_tiles_h
-                    # Обновление лучших размеров, если текущие лучше
+                    #  
                     if total_tiles < min_tiles:
                         min_tiles = total_tiles
                         best_tile_w = tile_w
