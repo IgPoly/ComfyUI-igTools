@@ -1,0 +1,21 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# --- Разное (полезно для ComfyUI проектов) ---
+# Если используете виртуальное окружение
+venv/
+.venv/
+env/
+
+# Настройки VS Code (если не хотите тащить их в репозиторий)
+.vscode/
+
+# Чекпоинты ноутбуков (если используете Jupyter)
+.ipynb_checkpoints/
