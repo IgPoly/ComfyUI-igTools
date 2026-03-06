@@ -5,7 +5,6 @@ import numpy as np
 from PIL import Image, ImageOps
 import folder_paths
 
-# --- КЛАСС 1: Загрузчик одиночного файла (Полный аналог системного LoadImage) ---
 class IGT_LoadSingleImage:
     @classmethod
     def INPUT_TYPES(s):
@@ -16,7 +15,6 @@ class IGT_LoadSingleImage:
                 }
 
     CATEGORY = "image/igt Tools"
-    # Добавили MASK (как в оригинале), STRING (имя) и IGT_META (метаданные)
     RETURN_TYPES = ("IMAGE", "MASK", "STRING", "IGT_META")
     RETURN_NAMES = ("image", "mask", "filename", "source_meta")
     FUNCTION = "load_image"
@@ -24,39 +22,41 @@ class IGT_LoadSingleImage:
     def load_image(self, image):
         image_path = folder_paths.get_annotated_filepath(image)
         
-        # Загрузка изображения
+        if not os.path.exists(image_path):
+             print(f"[IGT] Error: File not found: {image_path}")
+             return (torch.zeros((1, 64, 64, 3)), torch.zeros((1, 64, 64)), "error_file", {})
+
         i = Image.open(image_path)
+        filename_text = os.path.splitext(image)[0]
         
-        # Извлекаем метаданные: EXIF, ICC и блок Photoshop (где лежит IPTC)
-        source_meta = {
-            "exif": i.info.get("exif"),
-            "photoshop": i.info.get("photoshop"),
-            "icc_profile": i.info.get("icc_profile")
-        }
+        # ЗАБИРАЕМ ВСЕ МЕТАДАННЫЕ ИЗ ФАЙЛА
+        source_meta = {}
+        for k, v in i.info.items():
+            # Берем только безопасные типы данных, чтобы не сломать линки ComfyUI
+            if isinstance(v, (str, bytes, dict, int, float)):
+                source_meta[k] = v
+                
+        # ПЕЧАТАЕМ В КОНСОЛЬ, ЧТОБЫ УВИДЕТЬ ИСТИНУ
+        print(f"\n[IGT] --- METADATA FOUND IN {filename_text} ---")
+        print(f"[IGT] Keys: {list(source_meta.keys())}\n")
 
         i = ImageOps.exif_transpose(i)
         
-        # Конвертация в формат ComfyUI (RGB Tensor)
         if i.mode == 'I':
             i = i.point(lambda i: i * (1 / 255))
         image_rgb = i.convert("RGB")
         image_tensor = np.array(image_rgb).astype(np.float32) / 255.0
         image_tensor = torch.from_numpy(image_tensor)[None,]
         
-        # Создание альфа-маски (как в оригинальном лоадере)
         if 'A' in i.getbands():
             mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
             mask = 1. - mask
         else:
             mask = np.zeros((64, 64), dtype=np.float32)
         mask = torch.from_numpy(mask)[None,]
-
-        # Имя файла без расширения
-        filename_text = os.path.splitext(image)[0]
         
         return (image_tensor, mask, filename_text, source_meta)
 
-    # Системные функции ComfyUI для кэширования файлов при drag-and-drop
     @classmethod
     def IS_CHANGED(s, image):
         image_path = folder_paths.get_annotated_filepath(image)
@@ -72,7 +72,6 @@ class IGT_LoadSingleImage:
         return True
 
 
-# --- КЛАСС 2: Загрузчик папки (Batch) ---
 class IGT_LoadImageBatch:
     @classmethod
     def INPUT_TYPES(s):
@@ -110,17 +109,21 @@ class IGT_LoadImageBatch:
         image_path = os.path.join(directory, filename)
         
         i = Image.open(image_path)
+        filename_text = os.path.splitext(filename)[0]
         
-        source_meta = {
-            "exif": i.info.get("exif"),
-            "photoshop": i.info.get("photoshop"),
-            "icc_profile": i.info.get("icc_profile")
-        }
+        # ЗАБИРАЕМ ВСЕ МЕТАДАННЫЕ ИЗ ФАЙЛА
+        source_meta = {}
+        for k, v in i.info.items():
+            if isinstance(v, (str, bytes, dict, int, float)):
+                source_meta[k] = v
+                
+        # ПЕЧАТАЕМ В КОНСОЛЬ, ЧТОБЫ УВИДЕТЬ ИСТИНУ
+        print(f"\n[IGT] --- METADATA FOUND IN {filename_text} ---")
+        print(f"[IGT] Keys: {list(source_meta.keys())}\n")
 
         i = ImageOps.exif_transpose(i)
         image_rgb = i.convert("RGB")
         image_np = np.array(image_rgb).astype(np.float32) / 255.0
         image_tensor = torch.from_numpy(image_np)[None,]
 
-        filename_text = os.path.splitext(filename)[0]
         return (image_tensor, filename_text, source_meta)

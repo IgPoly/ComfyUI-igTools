@@ -17,13 +17,11 @@ class IGT_TelegramSender:
                 "image": ("IMAGE",),
                 "bot_token": ("STRING", {"default": "", "multiline": False}),
                 "chat_id": ("STRING", {"default": "", "multiline": False}),
-                "send_mode": (["Document (Best Quality)", "Photo (Preview)"],),
+                "send_mode": (["Document (PNG + Metadata)", "Photo (Compressed JPG)"],),
                 "filename_prefix": ("STRING", {"default": "ComfyImage"}),
-                # Новый чекбокс
                 "use_input_data": ("BOOLEAN", {"default": False}), 
             },
             "optional": {
-                # Новые входы для линков от Лоадера
                 "filename_override": ("STRING", {"forceInput": True}),
                 "source_meta": ("IGT_META",),
                 "caption": ("STRING", {"default": "", "multiline": True}),
@@ -47,58 +45,67 @@ class IGT_TelegramSender:
             img = Image.fromarray(np.clip(i_np, 0, 255).astype(np.uint8))
 
             metadata = None
-            save_kwargs = {} # Словарь для инъекции IPTC/EXIF
+            save_kwargs = {}
 
             if "Document" in send_mode:
                 metadata = PngInfo()
+                
+                # Вшиваем схему (Workflow) ComfyUI
                 if prompt is not None:
                     metadata.add_text("prompt", json.dumps(prompt))
                 if extra_pnginfo is not None:
                     for x in extra_pnginfo:
                         metadata.add_text(x, json.dumps(extra_pnginfo[x]))
 
-                # Если включен чекбокс и есть линк на метаданные, внедряем их
+                # Внедряем ВСЕ найденные метаданные из исходника
                 if use_input_data and source_meta:
-                    if source_meta.get("exif"):
-                        save_kwargs["exif"] = source_meta["exif"]
-                    if source_meta.get("photoshop"):
-                        # В блоке photoshop лежат данные IPTC
-                        save_kwargs["photoshop"] = source_meta["photoshop"]
-                    if source_meta.get("icc_profile"):
-                        save_kwargs["icc_profile"] = source_meta["icc_profile"]
+                    for k, v in source_meta.items():
+                        if k == "exif":
+                            save_kwargs["exif"] = v
+                            print("[IGT_Telegram] -> Injected EXIF")
+                        elif k == "photoshop" and isinstance(v, bytes):
+                            # Если исходник был JPEG, конвертируем блок Adobe IRB в PNG IPTC (формат Apple/ImageMagick)
+                            length_str = f"{len(v):8d}"
+                            hex_str = v.hex()
+                            hex_lines = "\n".join(hex_str[j:j+72] for j in range(0, len(hex_str), 72))
+                            profile_text = f"\n{length_str}\n{hex_lines}\n"
+                            metadata.add_text("Raw profile type iptc", profile_text)
+                            print("[IGT_Telegram] -> Converted JPEG 'photoshop' block to PNG IPTC")
+                        elif isinstance(v, str):
+                            # Если это XMP, авторские права или уже готовый текстовый чанк PNG
+                            metadata.add_text(k, v)
+                            print(f"[IGT_Telegram] -> Injected Text Chunk: {k}")
 
             img_buffer = io.BytesIO()
             
             if "Document" in send_mode:
-                # Внедряем save_kwargs (IPTC/EXIF) при сохранении документа
+                # Сохраняем в честный PNG!
                 img.save(img_buffer, format="PNG", pnginfo=metadata, compress_level=4, **save_kwargs)
                 target_ext = "png"
                 method = "sendDocument"
                 file_key = 'document'
             else:
-                img.save(img_buffer, format="JPEG", quality=90)
+                img.save(img_buffer, format="JPEG", quality=85)
                 target_ext = "jpg"
                 method = "sendPhoto"
                 file_key = 'photo'
             
             img_buffer.seek(0)
 
-            # Формирование имени файла
+            # Определение имени файла
             if use_input_data and filename_override:
-                # Используем имя из лоадера
                 batch_suf = f"_{i}" if len(image) > 1 else ""
                 filename = f"{filename_override}{batch_suf}.{target_ext}"
             else:
-                # Используем стандартный префикс
                 timestamp = datetime.datetime.now().strftime("%H%M%S")
                 batch_suf = f"_{i}" if len(image) > 1 else ""
                 filename = f"{filename_prefix}_{timestamp}{batch_suf}.{target_ext}"
 
-            # Отправка
             url = f"https://api.telegram.org/bot{bot_token}/{method}"
             data = {'chat_id': chat_id, 'caption': caption}
             files = {file_key: (filename, img_buffer, f'image/{target_ext}')}
 
+            # Отправка
             try:
                 response = requests.post(url, data=data, files=files, timeout=30)
                 if response.status_code != 200:
