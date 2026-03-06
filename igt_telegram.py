@@ -19,8 +19,13 @@ class IGT_TelegramSender:
                 "chat_id": ("STRING", {"default": "", "multiline": False}),
                 "send_mode": (["Document (Best Quality)", "Photo (Preview)"],),
                 "filename_prefix": ("STRING", {"default": "ComfyImage"}),
+                # Новый чекбокс
+                "use_input_data": ("BOOLEAN", {"default": False}), 
             },
             "optional": {
+                # Новые входы для линков от Лоадера
+                "filename_override": ("STRING", {"forceInput": True}),
+                "source_meta": ("IGT_META",),
                 "caption": ("STRING", {"default": "", "multiline": True}),
             },
             "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
@@ -31,20 +36,19 @@ class IGT_TelegramSender:
     CATEGORY = "image/igt Tools"
     OUTPUT_NODE = True
 
-    def send_image(self, image, bot_token, chat_id, send_mode, filename_prefix, caption="", prompt=None, extra_pnginfo=None):
+    def send_image(self, image, bot_token, chat_id, send_mode, filename_prefix, use_input_data, filename_override=None, source_meta=None, caption="", prompt=None, extra_pnginfo=None):
         
-        # Если токены не введены, просто пропускаем (чтобы не ломать очередь)
         if not bot_token or not chat_id:
             print("[IGT_Telegram] Error: Bot Token or Chat ID missing.")
             return (image,)
 
         for i, img_tensor in enumerate(image):
-            # 1. Конвертация тензора в PIL Image
             i_np = 255. * img_tensor.cpu().numpy()
             img = Image.fromarray(np.clip(i_np, 0, 255).astype(np.uint8))
 
-            # 2. Подготовка метаданных (только для режима документа)
             metadata = None
+            save_kwargs = {} # Словарь для инъекции IPTC/EXIF
+
             if "Document" in send_mode:
                 metadata = PngInfo()
                 if prompt is not None:
@@ -53,11 +57,21 @@ class IGT_TelegramSender:
                     for x in extra_pnginfo:
                         metadata.add_text(x, json.dumps(extra_pnginfo[x]))
 
-            # 3. Сохранение в буфер памяти (виртуальный файл)
+                # Если включен чекбокс и есть линк на метаданные, внедряем их
+                if use_input_data and source_meta:
+                    if source_meta.get("exif"):
+                        save_kwargs["exif"] = source_meta["exif"]
+                    if source_meta.get("photoshop"):
+                        # В блоке photoshop лежат данные IPTC
+                        save_kwargs["photoshop"] = source_meta["photoshop"]
+                    if source_meta.get("icc_profile"):
+                        save_kwargs["icc_profile"] = source_meta["icc_profile"]
+
             img_buffer = io.BytesIO()
-            # Для превью можно использовать JPEG, для документа строго PNG
+            
             if "Document" in send_mode:
-                img.save(img_buffer, format="PNG", pnginfo=metadata, compress_level=4)
+                # Внедряем save_kwargs (IPTC/EXIF) при сохранении документа
+                img.save(img_buffer, format="PNG", pnginfo=metadata, compress_level=4, **save_kwargs)
                 target_ext = "png"
                 method = "sendDocument"
                 file_key = 'document'
@@ -69,14 +83,19 @@ class IGT_TelegramSender:
             
             img_buffer.seek(0)
 
-            # 4. Формирование имени файла
-            timestamp = datetime.datetime.now().strftime("%H%M%S")
-            batch_suf = f"_{i}" if len(image) > 1 else ""
-            filename = f"{filename_prefix}_{timestamp}{batch_suf}.{target_ext}"
+            # Формирование имени файла
+            if use_input_data and filename_override:
+                # Используем имя из лоадера
+                batch_suf = f"_{i}" if len(image) > 1 else ""
+                filename = f"{filename_override}{batch_suf}.{target_ext}"
+            else:
+                # Используем стандартный префикс
+                timestamp = datetime.datetime.now().strftime("%H%M%S")
+                batch_suf = f"_{i}" if len(image) > 1 else ""
+                filename = f"{filename_prefix}_{timestamp}{batch_suf}.{target_ext}"
 
-            # 5. Отправка через API Telegram
+            # Отправка
             url = f"https://api.telegram.org/bot{bot_token}/{method}"
-            
             data = {'chat_id': chat_id, 'caption': caption}
             files = {file_key: (filename, img_buffer, f'image/{target_ext}')}
 
@@ -89,5 +108,4 @@ class IGT_TelegramSender:
             except Exception as e:
                 print(f"[IGT_Telegram] Connection Error: {e}")
 
-        # Возвращаем картинку дальше, чтобы цепочка нод не прерывалась
         return (image,)
