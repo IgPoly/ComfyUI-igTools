@@ -1,12 +1,79 @@
 import os
+import hashlib
 import torch
 import numpy as np
 from PIL import Image, ImageOps
+import folder_paths
 
+# --- КЛАСС 1: Загрузчик одиночного файла (Полный аналог системного LoadImage) ---
+class IGT_LoadSingleImage:
+    @classmethod
+    def INPUT_TYPES(s):
+        input_dir = folder_paths.get_input_directory()
+        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+        return {"required":
+                    {"image": (sorted(files), {"image_upload": True})},
+                }
+
+    CATEGORY = "image/igt Tools"
+    # Добавили MASK (как в оригинале), STRING (имя) и IGT_META (метаданные)
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "IGT_META")
+    RETURN_NAMES = ("image", "mask", "filename", "source_meta")
+    FUNCTION = "load_image"
+
+    def load_image(self, image):
+        image_path = folder_paths.get_annotated_filepath(image)
+        
+        # Загрузка изображения
+        i = Image.open(image_path)
+        
+        # Извлекаем метаданные: EXIF, ICC и блок Photoshop (где лежит IPTC)
+        source_meta = {
+            "exif": i.info.get("exif"),
+            "photoshop": i.info.get("photoshop"),
+            "icc_profile": i.info.get("icc_profile")
+        }
+
+        i = ImageOps.exif_transpose(i)
+        
+        # Конвертация в формат ComfyUI (RGB Tensor)
+        if i.mode == 'I':
+            i = i.point(lambda i: i * (1 / 255))
+        image_rgb = i.convert("RGB")
+        image_tensor = np.array(image_rgb).astype(np.float32) / 255.0
+        image_tensor = torch.from_numpy(image_tensor)[None,]
+        
+        # Создание альфа-маски (как в оригинальном лоадере)
+        if 'A' in i.getbands():
+            mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
+            mask = 1. - mask
+        else:
+            mask = np.zeros((64, 64), dtype=np.float32)
+        mask = torch.from_numpy(mask)[None,]
+
+        # Имя файла без расширения
+        filename_text = os.path.splitext(image)[0]
+        
+        return (image_tensor, mask, filename_text, source_meta)
+
+    # Системные функции ComfyUI для кэширования файлов при drag-and-drop
+    @classmethod
+    def IS_CHANGED(s, image):
+        image_path = folder_paths.get_annotated_filepath(image)
+        m = hashlib.sha256()
+        with open(image_path, 'rb') as f:
+            m.update(f.read())
+        return m.digest().hex()
+
+    @classmethod
+    def VALIDATE_INPUTS(s, image):
+        if not folder_paths.exists_annotated_filepath(image):
+            return "Invalid image file: {}".format(image)
+        return True
+
+
+# --- КЛАСС 2: Загрузчик папки (Batch) ---
 class IGT_LoadImageBatch:
-    def __init__(self):
-        pass
-
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -16,7 +83,6 @@ class IGT_LoadImageBatch:
             },
         }
 
-    # Добавляем третий выход для метаданных (кастомный тип IGT_META)
     RETURN_TYPES = ("IMAGE", "STRING", "IGT_META")
     RETURN_NAMES = ("image", "filename", "source_meta")
     FUNCTION = "load_image"
@@ -43,10 +109,8 @@ class IGT_LoadImageBatch:
         filename = files[target_index]
         image_path = os.path.join(directory, filename)
         
-        # Загрузка изображения и извлечение сырых метаданных
         i = Image.open(image_path)
         
-        # Сохраняем EXIF, ICC и блок Photoshop (именно в нем PIL хранит IPTC)
         source_meta = {
             "exif": i.info.get("exif"),
             "photoshop": i.info.get("photoshop"),
@@ -54,12 +118,9 @@ class IGT_LoadImageBatch:
         }
 
         i = ImageOps.exif_transpose(i)
-        image = i.convert("RGB")
-        image = np.array(image).astype(np.float32) / 255.0
-        image = torch.from_numpy(image)[None,]
+        image_rgb = i.convert("RGB")
+        image_np = np.array(image_rgb).astype(np.float32) / 255.0
+        image_tensor = torch.from_numpy(image_np)[None,]
 
         filename_text = os.path.splitext(filename)[0]
-        
-        print(f"[IGT] Loaded batch {target_index}/{len(files)-1}: {filename}")
-        
-        return (image, filename_text, source_meta)
+        return (image_tensor, filename_text, source_meta)
