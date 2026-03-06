@@ -6,10 +6,7 @@ app.registerExtension({
     // Внедряемся ДО регистрации нод в системе
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         
-        // --- БЛОК 1: МАГИЯ ДЛЯ ОДИНОЧНОГО ЛОАДЕРА (РАБОЧИЙ ВАРИАНТ) ---
-        // Если это наша нода загрузки, мы просим ядро ComfyUI
-        // применить к ней весь интерфейс (Drag&Drop, Preview, Кнопку) 
-        // от стандартной системной ноды "LoadImage".
+
         if (nodeData.name === "IGT_LoadSingleImage") {
             const uploadExt = app.extensions.find(e => e.name === "Comfy.UploadImage");
             if (uploadExt && uploadExt.beforeRegisterNodeDef) {
@@ -21,8 +18,7 @@ app.registerExtension({
         }
         // -------------------------------------------------------------
 
-        // --- БЛОК 2: ЛОГИКА ТЕКСТОВ ДЛЯ ОСТАЛЬНЫХ НОД ---
-        // Список твоих математических и расчетных нод
+
         const myNodes = [
             "IGT_SimpleTilesCalc", 
             "IGT_ImageTilesCalc", 
